@@ -39,5 +39,5 @@ python kfe_codec.py decode kfe/output.mp4 bin/restored.bin
 ```
 
 The codec uses frames of size 3840×2160 (RGB), so each frame stores exactly
-24,883,200 bytes of data. During encoding the last frame is zero padded as
-needed and the padding is removed during decoding.
+24,883,200 bytes of data. The original file size is written to the first frame
+so any padding added to the final frame can be removed during decoding.
