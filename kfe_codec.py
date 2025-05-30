@@ -16,12 +16,15 @@ def encode(input_path: str, output_path: str) -> None:
     with open(input_path, 'rb') as f:
         data = f.read()
 
-    # Split data into frames
-    frames = []
+    # First frame stores the original file size so decoding can trim padding
+    header = len(data).to_bytes(8, 'big') + b'\x00' * (BYTES_PER_FRAME - 8)
+    header_frame = np.frombuffer(header, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
+
+    # Split data into frames and pad the last frame with zeros
+    frames = [header_frame]
     for i in range(0, len(data), BYTES_PER_FRAME):
         chunk = data[i:i + BYTES_PER_FRAME]
         if len(chunk) < BYTES_PER_FRAME:
-            # Pad the last chunk with zeros
             chunk += b'\x00' * (BYTES_PER_FRAME - len(chunk))
         frame = np.frombuffer(chunk, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
         frames.append(frame)
@@ -42,6 +45,14 @@ def decode(input_path: str, output_path: str) -> None:
     if not cap.isOpened():
         raise IOError(f"Cannot open video file: {input_path}")
 
+    # Read the header frame containing the original file size
+    ret, header_frame = cap.read()
+    if not ret:
+        cap.release()
+        raise IOError("Input video contains no frames")
+    header_bytes = header_frame.tobytes()
+    original_size = int.from_bytes(header_bytes[:8], 'big')
+
     binary_chunks = []
     while True:
         ret, frame = cap.read()
@@ -50,10 +61,9 @@ def decode(input_path: str, output_path: str) -> None:
         binary_chunks.append(frame.tobytes())
     cap.release()
 
-    # Remove padding zeros from the last chunk
     if binary_chunks:
         binary_data = b''.join(binary_chunks)
-        binary_data = binary_data.rstrip(b'\x00')
+        binary_data = binary_data[:original_size]
     else:
         binary_data = b''
 
