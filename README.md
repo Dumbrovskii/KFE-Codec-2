@@ -15,13 +15,12 @@ kfe_codec.py  # codec implementation
 ## Requirements
 
 - Python 3.8+
-- NumPy
-- OpenCV (`opencv-python`)
+- The Python packages listed in `requirements.txt`
 
-Install the Python dependencies with:
+Install the dependencies with:
 
 ```
-pip install numpy opencv-python
+pip install -r requirements.txt
 ```
 
 ## Usage

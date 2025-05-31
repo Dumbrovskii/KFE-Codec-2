@@ -1,3 +1,10 @@
+"""Tests for the KFE codec.
+
+Dependencies for these tests are listed in ``requirements.txt``. Install them with::
+
+    pip install -r requirements.txt
+"""
+
 import os
 import tempfile
 
