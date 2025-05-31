@@ -10,6 +10,7 @@ BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
 
 
 def encode(input_path: str, output_path: str) -> None:
+
     """Encode a binary file into a KFE video.
 
     The FFV1 codec is used for lossless encoding, but some containers like MP4
@@ -28,6 +29,7 @@ def encode(input_path: str, output_path: str) -> None:
     if use_temp:
         temp_output = output_path + ".tmp.mkv"
 
+
     with open(input_path, "rb") as f:
         data = f.read()
 
@@ -42,7 +44,9 @@ def encode(input_path: str, output_path: str) -> None:
     # shipped with OpenCV.
     fourcc = cv2.VideoWriter_fourcc(*"FFV1")
     writer = cv2.VideoWriter(
+
         temp_output, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+
     )
     if not writer.isOpened():
         raise IOError(f"Cannot open video writer for: {output_path}")
