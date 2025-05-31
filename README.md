@@ -50,6 +50,13 @@ Decode a video back to a binary file:
 kfe-codec decode kfe/output.mkv bin/restored.bin
 ```
 
+Add ``--progress`` to either command to display progress information during
+encoding or decoding:
+
+```
+kfe-codec encode bin/input.bin kfe/output --progress
+```
+
 The ``kfe-codec`` command becomes available after installing the package with
 ``pip install .``. Direct execution with ``python kfe_codec.py`` continues to
 work if preferred.
