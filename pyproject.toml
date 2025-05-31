@@ -11,3 +11,7 @@ dependencies = ["numpy", "opencv-python"]
 
 [project.scripts]
 kfe-codec = "kfe_codec:main"
+
+[tool.setuptools]
+py-modules = ["kfe_codec"]
+packages = []
