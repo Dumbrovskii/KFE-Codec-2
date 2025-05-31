@@ -13,24 +13,13 @@ def encode(input_path: str, output_path: str) -> None:
 
     """Encode a binary file into a KFE video.
 
-    The FFV1 codec is used for lossless encoding, but the MP4 container does not
-    support that codec. When the output path ends with ``.mp4`` the video is
-    first written to a temporary ``.mkv`` file and then renamed to the desired
-    MP4 path once ``writer.release()`` completes. FFmpeg detects the container
-    from the file header, so decoding works even if the extension does not match
-    the actual container.
+    The output is always an MKV container encoded with the lossless FFV1 codec.
+    MP4 output is not supported.
     """
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-
-    temp_output = output_path
-    # MP4 containers cannot store FFV1 streams, so write to an MKV file first
-    use_temp = output_path.lower().endswith(".mp4")
-    if use_temp:
-        temp_output = output_path + ".tmp.mkv"
-
 
     with open(input_path, "rb") as f:
         data = f.read()
@@ -47,7 +36,7 @@ def encode(input_path: str, output_path: str) -> None:
     fourcc = cv2.VideoWriter_fourcc(*"FFV1")
     writer = cv2.VideoWriter(
 
-        temp_output, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+        output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
 
     )
     if not writer.isOpened():
@@ -64,8 +53,6 @@ def encode(input_path: str, output_path: str) -> None:
         )
         writer.write(frame)
     writer.release()
-    if use_temp:
-        os.replace(temp_output, output_path)
 
 
 def decode(input_path: str, output_path: str) -> None:
