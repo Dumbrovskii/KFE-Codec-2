@@ -13,7 +13,8 @@ import cv2
 from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from kfe_codec import encode, decode, BYTES_PER_FRAME
+from kfe_codec import encode, decode, BYTES_PER_FRAME, parse_args
+import argparse
 
 
 def test_encode_decode_roundtrip(tmp_path):
@@ -220,3 +221,30 @@ def test_checksum_mismatch(tmp_path):
 
     with pytest.raises(IOError):
         decode(str(video_file), str(output_file))
+
+
+def test_encode_invalid_workers(tmp_path):
+    input_file = tmp_path / "in.bin"
+    with open(input_file, "wb") as f:
+        f.write(b"data")
+
+    with pytest.raises(ValueError):
+        encode(str(input_file), str(tmp_path / "out.mkv"), workers=0)
+
+
+def test_decode_invalid_workers(tmp_path):
+    data = b"hello"
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mkv"
+    with open(input_file, "wb") as f:
+        f.write(data)
+
+    encode(str(input_file), str(video_file))
+
+    with pytest.raises(ValueError):
+        decode(str(video_file), str(tmp_path / "out.bin"), workers=-1)
+
+
+def test_parse_args_invalid_workers():
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_args(["encode", "in.bin", "out.mkv", "--workers", "0"])

@@ -49,6 +49,9 @@ def encode(
         writer itself remains sequential.
     """
 
+    if not isinstance(workers, int) or workers <= 0:
+        raise ValueError("workers must be a positive integer")
+
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -115,6 +118,8 @@ def decode(
     input_path: str, output_path: str, *, workers: int = 1
 ) -> None:
     """Decode a KFE video back into a binary file."""
+    if not isinstance(workers, int) or workers <= 0:
+        raise ValueError("workers must be a positive integer")
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -170,7 +175,7 @@ def decode(
         )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KFE Codec Prototype")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -203,7 +208,10 @@ def parse_args() -> argparse.Namespace:
         help="Number of worker threads to use during decoding",
     )
 
-    return parser.parse_args()
+    parsed = parser.parse_args(args)
+    if hasattr(parsed, "workers") and parsed.workers <= 0:
+        raise argparse.ArgumentTypeError("workers must be a positive integer")
+    return parsed
 
 
 def main() -> None:
