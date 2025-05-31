@@ -9,6 +9,8 @@ import os
 import sys
 
 import pytest
+import cv2
+from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from kfe_codec import encode, decode, BYTES_PER_FRAME
@@ -78,6 +80,21 @@ def test_decode_missing_input(tmp_path):
     output_file = tmp_path / 'out.bin'
     with pytest.raises(IOError):
         decode(str(missing_video), str(output_file))
+
+
+def test_decode_missing_input_releases(tmp_path, monkeypatch):
+    mock_cap = mock.Mock()
+    mock_cap.isOpened.return_value = False
+
+    def fake_video_capture(path):
+        return mock_cap
+
+    monkeypatch.setattr(cv2, 'VideoCapture', fake_video_capture)
+
+    with pytest.raises(IOError):
+        decode('badpath.mkv', str(tmp_path / 'out.bin'))
+
+    mock_cap.release.assert_called_once()
 
 
 def test_decode_truncated_video(tmp_path):
