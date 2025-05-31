@@ -85,6 +85,11 @@ def decode(input_path: str, output_path: str) -> None:
             written += bytes_to_write
     cap.release()
 
+    if written != original_size:
+        raise IOError(
+            "Video ended before all data could be read; file may be truncated or corrupted"
+        )
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KFE Codec Prototype")
