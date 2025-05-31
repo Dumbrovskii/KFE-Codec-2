@@ -21,11 +21,10 @@ def encode(input_path: str, output_path: str) -> None:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    with open(input_path, "rb") as f:
-        data = f.read()
+    file_size = os.path.getsize(input_path)
 
     # First frame stores the original file size so decoding can trim padding
-    header = len(data).to_bytes(8, "big") + b"\x00" * (BYTES_PER_FRAME - 8)
+    header = file_size.to_bytes(8, "big") + b"\x00" * (BYTES_PER_FRAME - 8)
     header_frame = np.frombuffer(header, dtype=np.uint8).reshape(
         (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
     )
@@ -44,14 +43,17 @@ def encode(input_path: str, output_path: str) -> None:
 
     writer.write(header_frame)
 
-    for i in range(0, len(data), BYTES_PER_FRAME):
-        chunk = data[i : i + BYTES_PER_FRAME]
-        if len(chunk) < BYTES_PER_FRAME:
-            chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
-        frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
-            (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
-        )
-        writer.write(frame)
+    with open(input_path, "rb") as f:
+        while True:
+            chunk = f.read(BYTES_PER_FRAME)
+            if not chunk:
+                break
+            if len(chunk) < BYTES_PER_FRAME:
+                chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
+            frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
+            )
+            writer.write(frame)
     writer.release()
 
 
