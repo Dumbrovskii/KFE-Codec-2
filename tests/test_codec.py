@@ -118,6 +118,40 @@ def test_decode_truncated_video(tmp_path):
         decode(str(truncated_video), str(output_file))
 
 
+def test_decode_random_mp4_fails(tmp_path):
+    """Decoding a non-KFE MP4 should raise an IOError."""
+    random_mp4 = tmp_path / "random.mp4"
+    output = tmp_path / "out.bin"
+
+    # Write some random bytes so the file exists but is not a valid video
+    random_mp4.write_bytes(os.urandom(1024))
+
+    with pytest.raises(IOError):
+        decode(str(random_mp4), str(output))
+
+
+def test_decode_mkv_with_mp4_extension(tmp_path):
+    """Decoding should work even if an MKV file has a .mp4 extension."""
+    data = os.urandom(256)
+    input_file = tmp_path / "input.bin"
+    mkv_file = tmp_path / "video.mkv"
+    mp4_alias = tmp_path / "video.mp4"
+    restored = tmp_path / "restored.bin"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+
+    encode(str(input_file), str(mkv_file))
+    mkv_file.rename(mp4_alias)
+
+    decode(str(mp4_alias), str(restored))
+
+    with open(restored, "rb") as f:
+        output_data = f.read()
+
+    assert output_data == data
+
+
 def _file_hash(path):
     import hashlib
 
