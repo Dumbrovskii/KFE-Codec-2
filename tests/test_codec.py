@@ -116,3 +116,33 @@ def test_decode_truncated_video(tmp_path):
 
     with pytest.raises(IOError):
         decode(str(truncated_video), str(output_file))
+
+
+def _file_hash(path):
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def test_encode_decode_multi_frame(tmp_path):
+    size = BYTES_PER_FRAME * 3 + 1234
+    input_file = tmp_path / "multi.bin"
+    video_file = tmp_path / "multi.mkv"
+    restored_file = tmp_path / "restored.bin"
+
+    # Write random bytes without holding the entire payload in memory
+    remaining = size
+    with open(input_file, "wb") as f:
+        while remaining > 0:
+            chunk = os.urandom(min(1024 * 1024, remaining))
+            f.write(chunk)
+            remaining -= len(chunk)
+
+    encode(str(input_file), str(video_file))
+    decode(str(video_file), str(restored_file))
+
+    assert _file_hash(input_file) == _file_hash(restored_file)
