@@ -16,7 +16,7 @@ from kfe_codec import encode, decode
 def test_encode_decode_roundtrip(tmp_path):
     data = os.urandom(1024)
     input_file = tmp_path / 'input.bin'
-    video_file = tmp_path / 'output.mp4'
+    video_file = tmp_path / 'output.mkv'
     restored_file = tmp_path / 'restored.bin'
 
     with open(input_file, 'wb') as f:

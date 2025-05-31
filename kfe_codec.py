@@ -20,7 +20,10 @@ def encode(input_path: str, output_path: str) -> None:
     header = len(data).to_bytes(8, 'big') + b'\x00' * (BYTES_PER_FRAME - 8)
     header_frame = np.frombuffer(header, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Use a lossless codec so encoded videos preserve the exact binary data.
+    # FFV1 is a widely supported lossless codec available in FFMPEG builds
+    # shipped with OpenCV.
+    fourcc = cv2.VideoWriter_fourcc(*'FFV1')
     writer = cv2.VideoWriter(output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT))
 
     writer.write(header_frame)
