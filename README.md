@@ -23,6 +23,9 @@ Install the dependencies with:
 pip install -r requirements.txt
 ```
 
+In a Codex workspace this setup is automated by running `codex/setup.sh`,
+which installs the required Python packages.
+
 ## Usage
 
 Encode a binary file to a video (the video is encoded using the lossless FFV1
@@ -31,6 +34,10 @@ codec):
 ```
 python kfe_codec.py encode bin/input.bin kfe/output.mkv
 ```
+
+When the output path ends in `.mp4` the encoder first writes a temporary MKV
+file and then renames it to the requested MP4 filename. This allows the lossless
+FFV1 stream to be stored inside an MP4 container.
 
 Decode a video back to a binary file:
 
@@ -45,3 +52,14 @@ so any padding added to the final frame can be removed during decoding.
 The implementation uses the **FFV1** codec for writing videos. FFV1 is a
 lossless codec, ensuring that every byte of the original file is preserved in
 the encoded video without degradation.
+
+## Testing
+
+Once the dependencies are installed you can run the automated tests with:
+
+```
+pytest
+```
+
+The suite exercises encoding and decoding behavior, including the MP4 fallback
+mechanism.
