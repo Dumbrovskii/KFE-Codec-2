@@ -25,6 +25,8 @@ def encode(input_path: str, output_path: str) -> None:
     # shipped with OpenCV.
     fourcc = cv2.VideoWriter_fourcc(*'FFV1')
     writer = cv2.VideoWriter(output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT))
+    if not writer.isOpened():
+        raise IOError(f"Cannot open video writer for: {output_path}")
 
     writer.write(header_frame)
 
@@ -53,22 +55,17 @@ def decode(input_path: str, output_path: str) -> None:
     header_bytes = header_frame.tobytes()
     original_size = int.from_bytes(header_bytes[:8], 'big')
 
-    binary_chunks = []
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        binary_chunks.append(frame.tobytes())
-    cap.release()
-
-    if binary_chunks:
-        binary_data = b''.join(binary_chunks)
-        binary_data = binary_data[:original_size]
-    else:
-        binary_data = b''
-
     with open(output_path, 'wb') as f:
-        f.write(binary_data)
+        written = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret or written >= original_size:
+                break
+            chunk = frame.tobytes()
+            bytes_to_write = min(original_size - written, len(chunk))
+            f.write(chunk[:bytes_to_write])
+            written += bytes_to_write
+    cap.release()
 
 
 def parse_args() -> argparse.Namespace:
