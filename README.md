@@ -25,18 +25,23 @@ pip install -r requirements.txt
 
 ## Usage
 
-Encode a binary file to a video:
+Encode a binary file to a video (the video is encoded using the lossless FFV1
+codec):
 
 ```
-python kfe_codec.py encode bin/input.bin kfe/output.mp4
+python kfe_codec.py encode bin/input.bin kfe/output.mkv
 ```
 
 Decode a video back to a binary file:
 
 ```
-python kfe_codec.py decode kfe/output.mp4 bin/restored.bin
+python kfe_codec.py decode kfe/output.mkv bin/restored.bin
 ```
 
 The codec uses frames of size 3840×2160 (RGB), so each frame stores exactly
 24,883,200 bytes of data. The original file size is written to the first frame
 so any padding added to the final frame can be removed during decoding.
+
+The implementation uses the **FFV1** codec for writing videos. FFV1 is a
+lossless codec, ensuring that every byte of the original file is preserved in
+the encoded video without degradation.
