@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kfe-codec"
+version = "0.1.0"
+description = "Prototype KFE codec"
+authors = [{name="KFE Team"}]
+dependencies = ["numpy", "opencv-python"]
+
+[project.scripts]
+kfe-codec = "kfe_codec:main"
