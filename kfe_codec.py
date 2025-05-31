@@ -10,10 +10,25 @@ BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
 
 
 def encode(input_path: str, output_path: str) -> None:
-    """Encode a binary file into a KFE video."""
+
+    """Encode a binary file into a KFE video.
+
+    The FFV1 codec is used for lossless encoding, but some containers like MP4
+    do not support it. To work around this limitation the video is first written
+    to an ``.mkv`` file and then renamed to the requested output path. FFmpeg
+    is able to detect the container from the file header, so decoding works even
+    if the extension does not match the actual container.
+    """
+
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+
+    temp_output = output_path
+    use_temp = not output_path.lower().endswith(".mkv")
+    if use_temp:
+        temp_output = output_path + ".tmp.mkv"
+
 
     with open(input_path, "rb") as f:
         data = f.read()
@@ -29,7 +44,9 @@ def encode(input_path: str, output_path: str) -> None:
     # shipped with OpenCV.
     fourcc = cv2.VideoWriter_fourcc(*"FFV1")
     writer = cv2.VideoWriter(
-        output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+
+        temp_output, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+
     )
     if not writer.isOpened():
         raise IOError(f"Cannot open video writer for: {output_path}")
@@ -45,6 +62,8 @@ def encode(input_path: str, output_path: str) -> None:
         )
         writer.write(frame)
     writer.release()
+    if use_temp:
+        os.replace(temp_output, output_path)
 
 
 def decode(input_path: str, output_path: str) -> None:
