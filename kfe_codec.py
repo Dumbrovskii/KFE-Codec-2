@@ -63,6 +63,7 @@ def decode(input_path: str, output_path: str) -> None:
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
+        cap.release()
         raise IOError(f"Cannot open video file: {input_path}")
 
     # Read the header frame containing the original file size
