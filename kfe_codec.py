@@ -2,6 +2,7 @@ import argparse
 import os
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import numpy as np
 import cv2
@@ -10,6 +11,26 @@ FRAME_WIDTH = 3840
 FRAME_HEIGHT = 2160
 CHANNELS = 3
 BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
+
+
+@contextmanager
+def video_writer(*args, **kwargs):
+    """Context manager that releases ``cv2.VideoWriter``."""
+    writer = cv2.VideoWriter(*args, **kwargs)
+    try:
+        yield writer
+    finally:
+        writer.release()
+
+
+@contextmanager
+def video_capture(*args, **kwargs):
+    """Context manager that releases ``cv2.VideoCapture``."""
+    cap = cv2.VideoCapture(*args, **kwargs)
+    try:
+        yield cap
+    finally:
+        cap.release()
 
 
 def positive_int(value: str) -> int:
@@ -87,40 +108,50 @@ def encode(
     # Select codec based on container
     if container == "mkv":
         fourcc = cv2.VideoWriter_fourcc(*"FFV1")
+        write_ext = ".mkv"
+        write_path = output_path
     elif container == "mp4":
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        # Write using MKV/FFV1 for reliability, then rename
+        fourcc = cv2.VideoWriter_fourcc(*"FFV1")
+        write_ext = ".mkv"
+        if output_path.endswith(".mp4"):
+            write_path = output_path[:-4] + ".mkv"
+        else:
+            write_path = output_path + ".mkv"
     else:
         raise ValueError(f"Unsupported container: {container}")
 
-    writer = cv2.VideoWriter(
-        output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
-    )
-    if not writer.isOpened():
-        raise IOError(f"Cannot open video writer for: {output_path}")
+    with video_writer(
+        write_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+    ) as writer:
+        if not writer.isOpened():
+            raise IOError(f"Cannot open video writer for: {output_path}")
 
-    writer.write(header_frame)
+        writer.write(header_frame)
 
-    def pad(chunk: bytes) -> bytes:
-        if len(chunk) < BYTES_PER_FRAME:
-            chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
-        return chunk
+        def pad(chunk: bytes) -> bytes:
+            if len(chunk) < BYTES_PER_FRAME:
+                chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
+            return chunk
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
-        input_path, "rb"
-    ) as f:
-        pending = []
-        while True:
-            chunk = f.read(BYTES_PER_FRAME)
-            if not chunk:
-                break
-            future = ex.submit(_chunk_to_frame, pad(chunk))
-            pending.append(future)
-            if len(pending) >= workers:
-                writer.write(pending.pop(0).result())
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
+            input_path, "rb"
+        ) as f:
+            pending = []
+            while True:
+                chunk = f.read(BYTES_PER_FRAME)
+                if not chunk:
+                    break
+                future = ex.submit(_chunk_to_frame, pad(chunk))
+                pending.append(future)
+                if len(pending) >= workers:
+                    writer.write(pending.pop(0).result())
 
-        for fut in pending:
-            writer.write(fut.result())
-    writer.release()
+            for fut in pending:
+                writer.write(fut.result())
+
+    if container == "mp4" and write_path != output_path:
+        os.replace(write_path, output_path)
 
 
 def decode(
@@ -131,50 +162,47 @@ def decode(
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        cap.release()
-        raise IOError(f"Cannot open video file: {input_path}")
+    with video_capture(input_path) as cap:
+        if not cap.isOpened():
+            raise IOError(f"Cannot open video file: {input_path}")
 
-    # Read the header frame containing the original file size
-    ret, header_frame = cap.read()
-    if not ret:
-        cap.release()
-        raise IOError("Input video contains no frames")
-    header_bytes = header_frame.tobytes()
-    original_size = int.from_bytes(header_bytes[:8], "big")
-    checksum = header_bytes[8 : 8 + hashlib.sha256().digest_size]
+        # Read the header frame containing the original file size
+        ret, header_frame = cap.read()
+        if not ret:
+            raise IOError("Input video contains no frames")
+        header_bytes = header_frame.tobytes()
+        original_size = int.from_bytes(header_bytes[:8], "big")
+        checksum = header_bytes[8 : 8 + hashlib.sha256().digest_size]
 
-    sha = hashlib.sha256()
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
-        output_path, "wb"
-    ) as f:
-        written = 0
-        pending = []
-        while True:
-            ret, frame = cap.read()
-            if not ret or written >= original_size:
-                break
-            future = ex.submit(_frame_to_bytes, frame)
-            pending.append(future)
-            if len(pending) >= workers:
-                chunk = pending.pop(0).result()
+        sha = hashlib.sha256()
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
+            output_path, "wb"
+        ) as f:
+            written = 0
+            pending = []
+            while True:
+                ret, frame = cap.read()
+                if not ret or written >= original_size:
+                    break
+                future = ex.submit(_frame_to_bytes, frame)
+                pending.append(future)
+                if len(pending) >= workers:
+                    chunk = pending.pop(0).result()
+                    bytes_to_write = min(original_size - written, len(chunk))
+                    data = chunk[:bytes_to_write]
+                    f.write(data)
+                    sha.update(data)
+                    written += bytes_to_write
+
+            for fut in pending:
+                chunk = fut.result()
+                if written >= original_size:
+                    break
                 bytes_to_write = min(original_size - written, len(chunk))
                 data = chunk[:bytes_to_write]
                 f.write(data)
                 sha.update(data)
                 written += bytes_to_write
-
-        for fut in pending:
-            chunk = fut.result()
-            if written >= original_size:
-                break
-            bytes_to_write = min(original_size - written, len(chunk))
-            data = chunk[:bytes_to_write]
-            f.write(data)
-            sha.update(data)
-            written += bytes_to_write
-    cap.release()
 
     if written != original_size or sha.digest() != checksum:
         raise IOError(
