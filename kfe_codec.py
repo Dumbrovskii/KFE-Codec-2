@@ -10,38 +10,63 @@ BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
 
 
 def encode(input_path: str, output_path: str) -> None:
-    """Encode a binary file into a KFE video."""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    """Encode a binary file into a KFE video.
 
-    with open(input_path, 'rb') as f:
+    The FFV1 codec is used for lossless encoding, but some containers like MP4
+    do not support it. To work around this limitation the video is first written
+    to an ``.mkv`` file and then renamed to the requested output path. FFmpeg
+    is able to detect the container from the file header, so decoding works even
+    if the extension does not match the actual container.
+    """
+
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    temp_output = output_path
+    use_temp = not output_path.lower().endswith(".mkv")
+    if use_temp:
+        temp_output = output_path + ".tmp.mkv"
+
+    with open(input_path, "rb") as f:
         data = f.read()
 
     # First frame stores the original file size so decoding can trim padding
-    header = len(data).to_bytes(8, 'big') + b'\x00' * (BYTES_PER_FRAME - 8)
-    header_frame = np.frombuffer(header, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
+    header = len(data).to_bytes(8, "big") + b"\x00" * (BYTES_PER_FRAME - 8)
+    header_frame = np.frombuffer(header, dtype=np.uint8).reshape(
+        (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
+    )
 
     # Use a lossless codec so encoded videos preserve the exact binary data.
     # FFV1 is a widely supported lossless codec available in FFMPEG builds
     # shipped with OpenCV.
-    fourcc = cv2.VideoWriter_fourcc(*'FFV1')
-    writer = cv2.VideoWriter(output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT))
+    fourcc = cv2.VideoWriter_fourcc(*"FFV1")
+    writer = cv2.VideoWriter(
+        temp_output, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
+    )
     if not writer.isOpened():
         raise IOError(f"Cannot open video writer for: {output_path}")
 
     writer.write(header_frame)
 
     for i in range(0, len(data), BYTES_PER_FRAME):
-        chunk = data[i:i + BYTES_PER_FRAME]
+        chunk = data[i : i + BYTES_PER_FRAME]
         if len(chunk) < BYTES_PER_FRAME:
-            chunk += b'\x00' * (BYTES_PER_FRAME - len(chunk))
-        frame = np.frombuffer(chunk, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
+            chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
+        frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
+            (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
+        )
         writer.write(frame)
     writer.release()
+    if use_temp:
+        os.replace(temp_output, output_path)
 
 
 def decode(input_path: str, output_path: str) -> None:
     """Decode a KFE video back into a binary file."""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -53,9 +78,9 @@ def decode(input_path: str, output_path: str) -> None:
         cap.release()
         raise IOError("Input video contains no frames")
     header_bytes = header_frame.tobytes()
-    original_size = int.from_bytes(header_bytes[:8], 'big')
+    original_size = int.from_bytes(header_bytes[:8], "big")
 
-    with open(output_path, 'wb') as f:
+    with open(output_path, "wb") as f:
         written = 0
         while True:
             ret, frame = cap.read()
@@ -72,24 +97,24 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KFE Codec Prototype")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    enc = subparsers.add_parser('encode', help='Encode binary to KFE video')
-    enc.add_argument('input_file', help='Path to input binary file')
-    enc.add_argument('output_file', help='Path to output video file')
+    enc = subparsers.add_parser("encode", help="Encode binary to KFE video")
+    enc.add_argument("input_file", help="Path to input binary file")
+    enc.add_argument("output_file", help="Path to output video file")
 
-    dec = subparsers.add_parser('decode', help='Decode KFE video to binary')
-    dec.add_argument('input_file', help='Path to input video file')
-    dec.add_argument('output_file', help='Path to output binary file')
+    dec = subparsers.add_parser("decode", help="Decode KFE video to binary")
+    dec.add_argument("input_file", help="Path to input video file")
+    dec.add_argument("output_file", help="Path to output binary file")
 
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.command == 'encode':
+    if args.command == "encode":
         encode(args.input_file, args.output_file)
-    elif args.command == 'decode':
+    elif args.command == "decode":
         decode(args.input_file, args.output_file)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
