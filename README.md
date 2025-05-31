@@ -32,20 +32,27 @@ Alternatively the project can be installed as a package using ``pip``:
 pip install .
 ```
 
+Installing the package exposes a ``kfe-codec`` command that wraps
+``python kfe_codec.py`` for convenient use from the command line.
+
 ## Usage
 
 Encode a binary file to a video. By default the output is an MKV container
 encoded with FFV1. Use ``--container mp4`` to produce an MP4 file:
 
 ```
-python kfe_codec.py encode bin/input.bin kfe/output --container mkv
+kfe-codec encode bin/input.bin kfe/output --container mkv
 ```
 
 Decode a video back to a binary file:
 
 ```
-python kfe_codec.py decode kfe/output.mkv bin/restored.bin
+kfe-codec decode kfe/output.mkv bin/restored.bin
 ```
+
+The ``kfe-codec`` command becomes available after installing the package with
+``pip install .``. Direct execution with ``python kfe_codec.py`` continues to
+work if preferred.
 
 The codec uses frames of size 3840×2160 (RGB), so each frame stores exactly
 24,883,200 bytes of data. The original file size is written to the first frame
