@@ -87,36 +87,19 @@ def encode(
     if not output_path.endswith(f".{container}"):
         output_path += f".{container}"
 
-    file_size = os.path.getsize(input_path)
+    # First pass: compute checksum and file size
+    sha = hashlib.sha256()
+    file_size = 0
+    with open(input_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            file_size += len(chunk)
+            sha.update(chunk)
+    checksum = sha.digest()
 
     def pad(chunk: bytes) -> bytes:
         if len(chunk) < BYTES_PER_FRAME:
             chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
         return chunk
-
-    # Read the input only once while computing the checksum and converting
-    # chunks into frames. The resulting frames are buffered until the checksum
-    # is known so the header can be written afterwards.
-    frames: list[np.ndarray] = []
-    sha = hashlib.sha256()
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
-        input_path, "rb"
-    ) as f:
-        pending = []
-        while True:
-            chunk = f.read(BYTES_PER_FRAME)
-            if not chunk:
-                break
-            sha.update(chunk)
-            future = ex.submit(_chunk_to_frame, pad(chunk))
-            pending.append(future)
-            if len(pending) >= workers:
-                frames.append(pending.pop(0).result())
-
-        for fut in pending:
-            frames.append(fut.result())
-
-    checksum = sha.digest()
 
     header = (
         file_size.to_bytes(8, "big")
@@ -145,8 +128,21 @@ def encode(
 
         writer.write(header_frame)
 
-        for frame in frames:
-            writer.write(frame)
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
+            input_path, "rb"
+        ) as f:
+            pending = []
+            while True:
+                chunk = f.read(BYTES_PER_FRAME)
+                if not chunk:
+                    break
+                future = ex.submit(_chunk_to_frame, pad(chunk))
+                pending.append(future)
+                if len(pending) >= workers:
+                    writer.write(pending.pop(0).result())
+
+            for fut in pending:
+                writer.write(fut.result())
 
     if container == "mp4" and write_path != output_path:
         os.replace(write_path, output_path)
