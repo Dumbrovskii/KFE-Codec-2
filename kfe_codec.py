@@ -62,6 +62,7 @@ def encode(
     *,
     container: str = "mkv",
     workers: int = 1,
+    progress: bool = False,
 ) -> None:
     """Encode a binary file into a KFE video.
 
@@ -78,6 +79,8 @@ def encode(
     workers:
         Number of worker threads used when converting chunks to frames. The
         writer itself remains sequential.
+    progress:
+        If ``True``, display progress information during encoding.
     """
 
     out_dir = os.path.dirname(output_path)
@@ -129,6 +132,8 @@ def encode(
             input_path, "rb"
         ) as f:
             pending = []
+            frame_total = (file_size + BYTES_PER_FRAME - 1) // BYTES_PER_FRAME
+            written_frames = 0
             while True:
                 chunk = f.read(BYTES_PER_FRAME)
                 if not chunk:
@@ -137,14 +142,48 @@ def encode(
                 pending.append(future)
                 if len(pending) >= workers:
                     writer.write(pending.pop(0).result())
+                    written_frames += 1
+                    if progress:
+                        print(
+                            f"Encoding {written_frames}/{frame_total} frames",
+                            end="\r",
+                            flush=True,
+                        )
 
             for fut in pending:
                 writer.write(fut.result())
+                written_frames += 1
+                if progress:
+                    print(
+                        f"Encoding {written_frames}/{frame_total} frames",
+                        end="\r",
+                        flush=True,
+                    )
+            if progress:
+                print()
 
 
 
-def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
-    """Decode a KFE video back into a binary file."""
+def decode(
+    input_path: str,
+    output_path: str,
+    *,
+    workers: int = 1,
+    progress: bool = False,
+) -> None:
+    """Decode a KFE video back into a binary file.
+
+    Parameters
+    ----------
+    input_path:
+        Path to the video file to decode.
+    output_path:
+        Path where the restored binary data will be written.
+    workers:
+        Number of worker threads used when converting frames back to bytes.
+    progress:
+        If ``True``, display progress information during decoding.
+    """
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -167,6 +206,8 @@ def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
         ) as f:
             written = 0
             pending = []
+            frame_total = (original_size + BYTES_PER_FRAME - 1) // BYTES_PER_FRAME
+            decoded_frames = 0
             while True:
                 ret, frame = cap.read()
                 if not ret or written >= original_size:
@@ -180,6 +221,13 @@ def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
                     f.write(data)
                     sha.update(data)
                     written += bytes_to_write
+                    decoded_frames += 1
+                    if progress:
+                        print(
+                            f"Decoding {decoded_frames}/{frame_total} frames",
+                            end="\r",
+                            flush=True,
+                        )
 
             for fut in pending:
                 chunk = fut.result()
@@ -190,6 +238,15 @@ def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
                 f.write(data)
                 sha.update(data)
                 written += bytes_to_write
+                decoded_frames += 1
+                if progress:
+                    print(
+                        f"Decoding {decoded_frames}/{frame_total} frames",
+                        end="\r",
+                        flush=True,
+                    )
+            if progress:
+                print()
 
     if written != original_size or sha.digest() != checksum:
         raise IOError("Video ended before all data could be read or checksum mismatch")
@@ -220,6 +277,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         default=1,
         help="Number of worker threads to use during encoding",
     )
+    enc.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress information while encoding",
+    )
 
     dec = subparsers.add_parser(
         "decode", help="Decode KFE video to binary", exit_on_error=False
@@ -232,6 +294,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         type=positive_int,
         default=1,
         help="Number of worker threads to use during decoding",
+    )
+    dec.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress information while decoding",
     )
     try:
         return parser.parse_args(args)
@@ -247,12 +314,14 @@ def main() -> None:
             args.output_file,
             container=args.container,
             workers=args.workers,
+            progress=args.progress,
         )
     elif args.command == "decode":
         decode(
             args.input_file,
             args.output_file,
             workers=args.workers,
+            progress=args.progress,
         )
 
 
