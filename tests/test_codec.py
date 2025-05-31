@@ -180,3 +180,43 @@ def test_encode_decode_multi_frame(tmp_path):
     decode(str(video_file), str(restored_file))
 
     assert _file_hash(input_file) == _file_hash(restored_file)
+
+
+def test_mp4_roundtrip_workers(tmp_path):
+    data = os.urandom(4096)
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mp4"
+    restored_file = tmp_path / "restored.bin"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+
+    encode(str(input_file), str(video_file), container="mp4", workers=2)
+    decode(str(video_file), str(restored_file), workers=2)
+
+    assert _file_hash(input_file) == _file_hash(restored_file)
+
+
+def test_checksum_mismatch(tmp_path):
+    data = os.urandom(2048)
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mkv"
+    output_file = tmp_path / "out.bin"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+
+    encode(str(input_file), str(video_file))
+
+    # Corrupt a byte somewhere in the middle of the video
+    size = os.path.getsize(video_file)
+    with open(video_file, "r+b") as f:
+        f.seek(size // 2)
+        b = f.read(1)
+        if not b:
+            pytest.skip("Could not corrupt file: no byte read")
+        f.seek(-1, os.SEEK_CUR)
+        f.write(b"\x00" if b != b"\x00" else b"\x01")
+
+    with pytest.raises(IOError):
+        decode(str(video_file), str(output_file))
