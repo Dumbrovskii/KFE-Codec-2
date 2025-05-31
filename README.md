@@ -35,9 +35,8 @@ codec):
 python kfe_codec.py encode bin/input.bin kfe/output.mkv
 ```
 
-When the output path ends in `.mp4` the encoder first writes a temporary MKV
-file and then renames it to the requested MP4 filename. This allows the lossless
-FFV1 stream to be stored inside an MP4 container.
+Currently the encoder only supports writing MKV files. Use the `.mkv`
+extension for the output path when encoding.
 
 Decode a video back to a binary file:
 
