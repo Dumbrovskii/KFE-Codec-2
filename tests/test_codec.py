@@ -228,8 +228,8 @@ def test_encode_invalid_workers(tmp_path):
     with open(input_file, "wb") as f:
         f.write(b"data")
 
-    with pytest.raises(ValueError):
-        encode(str(input_file), str(tmp_path / "out.mkv"), workers=0)
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_args(["encode", str(input_file), str(tmp_path / "out.mkv"), "--workers", "0"])
 
 
 def test_decode_invalid_workers(tmp_path):
@@ -241,8 +241,8 @@ def test_decode_invalid_workers(tmp_path):
 
     encode(str(input_file), str(video_file))
 
-    with pytest.raises(ValueError):
-        decode(str(video_file), str(tmp_path / "out.bin"), workers=-1)
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_args(["decode", str(video_file), str(tmp_path / "out.bin"), "--workers", "-1"])
 
 
 def test_parse_args_invalid_workers():
