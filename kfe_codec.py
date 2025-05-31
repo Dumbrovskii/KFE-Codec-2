@@ -12,6 +12,17 @@ CHANNELS = 3
 BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
 
 
+def positive_int(value: str) -> int:
+    """Parse ``value`` into a positive integer for argparse."""
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a valid integer")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError("workers must be a positive integer")
+    return ivalue
+
+
 def _chunk_to_frame(chunk: bytes) -> np.ndarray:
     """Convert a BYTES_PER_FRAME sized chunk to a frame array."""
     return np.frombuffer(chunk, dtype=np.uint8).reshape(
@@ -49,8 +60,6 @@ def encode(
         writer itself remains sequential.
     """
 
-    if not isinstance(workers, int) or workers <= 0:
-        raise ValueError("workers must be a positive integer")
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -118,8 +127,6 @@ def decode(
     input_path: str, output_path: str, *, workers: int = 1
 ) -> None:
     """Decode a KFE video back into a binary file."""
-    if not isinstance(workers, int) or workers <= 0:
-        raise ValueError("workers must be a positive integer")
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -176,10 +183,14 @@ def decode(
 
 
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="KFE Codec Prototype")
+    parser = argparse.ArgumentParser(
+        description="KFE Codec Prototype", exit_on_error=False
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    enc = subparsers.add_parser("encode", help="Encode binary to KFE video")
+    enc = subparsers.add_parser(
+        "encode", help="Encode binary to KFE video", exit_on_error=False
+    )
     enc.add_argument("input_file", help="Path to input binary file")
     enc.add_argument("output_file", help="Path to output video file")
     enc.add_argument(
@@ -192,26 +203,27 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     enc.add_argument(
         "-w",
         "--workers",
-        type=int,
+        type=positive_int,
         default=1,
         help="Number of worker threads to use during encoding",
     )
 
-    dec = subparsers.add_parser("decode", help="Decode KFE video to binary")
+    dec = subparsers.add_parser(
+        "decode", help="Decode KFE video to binary", exit_on_error=False
+    )
     dec.add_argument("input_file", help="Path to input video file")
     dec.add_argument("output_file", help="Path to output binary file")
     dec.add_argument(
         "-w",
         "--workers",
-        type=int,
+        type=positive_int,
         default=1,
         help="Number of worker threads to use during decoding",
     )
-
-    parsed = parser.parse_args(args)
-    if hasattr(parsed, "workers") and parsed.workers <= 0:
-        raise argparse.ArgumentTypeError("workers must be a positive integer")
-    return parsed
+    try:
+        return parser.parse_args(args)
+    except argparse.ArgumentError as err:
+        raise argparse.ArgumentTypeError(str(err))
 
 
 def main() -> None:
