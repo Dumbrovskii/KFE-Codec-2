@@ -113,12 +113,9 @@ def encode(
         fourcc = cv2.VideoWriter_fourcc(*"FFV1")
         write_path = output_path
     elif container == "mp4":
-        # Write using MKV/FFV1 for reliability, then rename
-        fourcc = cv2.VideoWriter_fourcc(*"FFV1")
-        if output_path.endswith(".mp4"):
-            write_path = output_path[:-4] + ".mkv"
-        else:
-            write_path = output_path + ".mkv"
+        # Use a standard MPEG-4 codec and write directly to MP4
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        write_path = output_path
     else:
         raise ValueError(f"Unsupported container: {container}")
 
@@ -144,8 +141,6 @@ def encode(
             for fut in pending:
                 writer.write(fut.result())
 
-    if container == "mp4" and write_path != output_path:
-        os.replace(write_path, output_path)
 
 
 def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
