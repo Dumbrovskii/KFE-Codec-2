@@ -20,19 +20,16 @@ def encode(input_path: str, output_path: str) -> None:
     header = len(data).to_bytes(8, 'big') + b'\x00' * (BYTES_PER_FRAME - 8)
     header_frame = np.frombuffer(header, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
 
-    # Split data into frames and pad the last frame with zeros
-    frames = [header_frame]
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT))
+
+    writer.write(header_frame)
+
     for i in range(0, len(data), BYTES_PER_FRAME):
         chunk = data[i:i + BYTES_PER_FRAME]
         if len(chunk) < BYTES_PER_FRAME:
             chunk += b'\x00' * (BYTES_PER_FRAME - len(chunk))
         frame = np.frombuffer(chunk, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, CHANNELS))
-        frames.append(frame)
-
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    writer = cv2.VideoWriter(output_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT))
-
-    for frame in frames:
         writer.write(frame)
     writer.release()
 
