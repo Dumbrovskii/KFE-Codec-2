@@ -63,7 +63,6 @@ def encode(
     container: str = "mkv",
     workers: int = 1,
 ) -> None:
-
     """Encode a binary file into a KFE video.
 
     Parameters
@@ -81,7 +80,6 @@ def encode(
         writer itself remains sequential.
     """
 
-
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -91,11 +89,33 @@ def encode(
 
     file_size = os.path.getsize(input_path)
 
-    # Compute checksum in a streaming fashion
+    def pad(chunk: bytes) -> bytes:
+        if len(chunk) < BYTES_PER_FRAME:
+            chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
+        return chunk
+
+    # Read the input only once while computing the checksum and converting
+    # chunks into frames. The resulting frames are buffered until the checksum
+    # is known so the header can be written afterwards.
+    frames: list[np.ndarray] = []
     sha = hashlib.sha256()
-    with open(input_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
+        input_path, "rb"
+    ) as f:
+        pending = []
+        while True:
+            chunk = f.read(BYTES_PER_FRAME)
+            if not chunk:
+                break
             sha.update(chunk)
+            future = ex.submit(_chunk_to_frame, pad(chunk))
+            pending.append(future)
+            if len(pending) >= workers:
+                frames.append(pending.pop(0).result())
+
+        for fut in pending:
+            frames.append(fut.result())
+
     checksum = sha.digest()
 
     header = (
@@ -108,12 +128,10 @@ def encode(
     # Select codec based on container
     if container == "mkv":
         fourcc = cv2.VideoWriter_fourcc(*"FFV1")
-        write_ext = ".mkv"
         write_path = output_path
     elif container == "mp4":
         # Write using MKV/FFV1 for reliability, then rename
         fourcc = cv2.VideoWriter_fourcc(*"FFV1")
-        write_ext = ".mkv"
         if output_path.endswith(".mp4"):
             write_path = output_path[:-4] + ".mkv"
         else:
@@ -121,42 +139,20 @@ def encode(
     else:
         raise ValueError(f"Unsupported container: {container}")
 
-    with video_writer(
-        write_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)
-    ) as writer:
+    with video_writer(write_path, fourcc, 60, (FRAME_WIDTH, FRAME_HEIGHT)) as writer:
         if not writer.isOpened():
             raise IOError(f"Cannot open video writer for: {output_path}")
 
         writer.write(header_frame)
 
-        def pad(chunk: bytes) -> bytes:
-            if len(chunk) < BYTES_PER_FRAME:
-                chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
-            return chunk
-
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
-            input_path, "rb"
-        ) as f:
-            pending = []
-            while True:
-                chunk = f.read(BYTES_PER_FRAME)
-                if not chunk:
-                    break
-                future = ex.submit(_chunk_to_frame, pad(chunk))
-                pending.append(future)
-                if len(pending) >= workers:
-                    writer.write(pending.pop(0).result())
-
-            for fut in pending:
-                writer.write(fut.result())
+        for frame in frames:
+            writer.write(frame)
 
     if container == "mp4" and write_path != output_path:
         os.replace(write_path, output_path)
 
 
-def decode(
-    input_path: str, output_path: str, *, workers: int = 1
-) -> None:
+def decode(input_path: str, output_path: str, *, workers: int = 1) -> None:
     """Decode a KFE video back into a binary file."""
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -205,9 +201,7 @@ def decode(
                 written += bytes_to_write
 
     if written != original_size or sha.digest() != checksum:
-        raise IOError(
-            "Video ended before all data could be read or checksum mismatch"
-        )
+        raise IOError("Video ended before all data could be read or checksum mismatch")
 
 
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
