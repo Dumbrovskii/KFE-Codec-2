@@ -293,3 +293,28 @@ def test_cpECSK_cert_mismatch(tmp_path):
 
     with pytest.raises(IOError):
         decode(str(video_file), str(output_file), certificate=str(cert_bad))
+
+def test_cpECSK_default_cert(tmp_path):
+    data = os.urandom(256)
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mkv"
+    restored_file = tmp_path / "restored.bin"
+    cert_file = tmp_path / "cert.pem"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+    with open(cert_file, "wb") as f:
+        f.write(b"certificate-data")
+
+    encode(str(input_file), str(video_file), certificate=str(cert_file))
+
+    cert_copy = video_file.with_name(video_file.name + ".cert")
+    assert cert_copy.exists()
+
+    # Decode without explicitly passing --cert; should use <video>.cert
+    decode(str(video_file), str(restored_file))
+
+    with open(restored_file, "rb") as f:
+        restored = f.read()
+
+    assert restored == data
