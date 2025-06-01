@@ -3,6 +3,16 @@ import os
 import hashlib
 import math
 import shutil
+
+
+try:
+    from numba import njit
+except Exception:  # pragma: no cover - numba may be unavailable
+    def njit(*args, **kwargs):
+        def wrapper(func):
+            return func
+        return wrapper
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -13,6 +23,21 @@ FRAME_WIDTH = 3840
 FRAME_HEIGHT = 2160
 CHANNELS = 3
 BYTES_PER_FRAME = FRAME_WIDTH * FRAME_HEIGHT * CHANNELS
+
+# Cached forward and inverse cpECSK permutation indices
+_PERM_CACHE: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+
+
+@njit(cache=True)
+def _numba_coprime_shift(arr: np.ndarray, a: int) -> np.ndarray:
+    """Return a copy of ``arr`` with channels permuted by coprime ``a``."""
+    n_rows, n_cols = arr.shape
+    result = np.empty_like(arr)
+    for j in range(n_cols):
+        new_j = (j * a) % n_cols
+        for i in range(n_rows):
+            result[i, new_j] = arr[i, j]
+    return result
 
 
 @contextmanager
@@ -48,87 +73,60 @@ def positive_int(value: str) -> int:
 
 def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
 
-    """Convert ``chunk`` to a frame array.
+    """Convert a BYTES_PER_FRAME sized chunk to a frame array.
 
-    If ``vk3`` is provided, the cpECSK permutation is applied while the frame is
-    constructed to avoid an extra copy of the entire matrix.
+    If ``vk3`` is provided, apply cpECSK permutation.
     """
-    pixels = np.frombuffer(chunk, dtype=np.uint8).reshape(-1, CHANNELS)
-    if vk3 is None:
-        # ``pixels`` references ``chunk`` memory, so copy to ensure the frame
-        # remains valid after ``chunk`` is freed.
-        return pixels.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS).copy()
-
-    a, b, shift = vk3
-    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
-    indices = (np.arange(n_pixels) * a + b) % n_pixels
-    permuted = np.empty_like(pixels)
-    permuted[indices] = pixels
-    if shift:
-        permuted = np.roll(permuted, shift=shift, axis=1)
-    return permuted.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
+    frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
+        (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
+    )
+    if vk3 is not None:
+        frame = _cpECSK_permute(frame, vk3, encode=True)
+    return frame
 
 
 def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) -> bytes:
-    """Convert ``frame`` back to raw bytes.
+    """Convert a frame array back to raw bytes.
 
-    If ``vk3`` is provided, the cpECSK permutation is reversed while extracting
-    bytes, avoiding transformation of an intermediate full-size matrix.
+    If ``vk3`` is provided, reverse the cpECSK permutation first.
     """
-    pixels = frame.reshape(-1, CHANNELS)
-    if vk3 is None:
-        return pixels.tobytes()
+    if vk3 is not None:
+        frame = _cpECSK_permute(frame, vk3, encode=False)
+    return frame.tobytes()
 
-    a, b, shift = vk3
-    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
-    if shift:
-        pixels = np.roll(pixels, shift=-shift, axis=1)
-    indices = (pow(a, -1, n_pixels) * (np.arange(n_pixels) - b)) % n_pixels
-    restored = np.empty_like(pixels)
-    restored[indices] = pixels
-    return restored.tobytes()
-
-
-
-
-def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
-    """Derive the cpECSK key tuple (a, b, color_shift) from certificate bytes."""
-    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
-    digest = hashlib.sha256(cert_bytes).digest()
-    seed = int.from_bytes(digest[:4], "big") % n_pixels
-    a = seed or 1
-    while math.gcd(a, n_pixels) != 1:
-        a = (a + 1) % n_pixels or 1
-    b = cert_bytes[0]
-    color_shift = b % CHANNELS
-    return a, b, color_shift
 
 
 def _cpECSK_permute(
     frame: np.ndarray, vk3: tuple[int, int, int], *, encode: bool
 ) -> np.ndarray:
-    """Apply or reverse cpECSK pixel permutation on ``frame``."""
-    a, b, color_shift = vk3
+    """Apply or reverse cpECSK pixel permutation on ``frame`` using cached indices."""
+    a, b, channel_a = vk3
     n_pixels = FRAME_WIDTH * FRAME_HEIGHT
     flat = frame.reshape(n_pixels, CHANNELS)
 
-    if not encode:
-        if color_shift:
-            flat = np.roll(flat, shift=-color_shift, axis=1)
-        a_inv = pow(a, -1, n_pixels)
-        indices = (a_inv * (np.arange(n_pixels) - b)) % n_pixels
-        flat = flat[indices]
+    key = (a, b)
+    perms = _PERM_CACHE.get(key)
+    if perms is None:
+        fwd = (np.arange(n_pixels) * a + b) % n_pixels
+        inv = (pow(a, -1, n_pixels) * (np.arange(n_pixels) - b)) % n_pixels
+        perms = (fwd.astype(np.int64), inv.astype(np.int64))
+        _PERM_CACHE[key] = perms
+    fwd_idx, inv_idx = perms
+
+    if encode:
+        flat = flat[fwd_idx]
+        if channel_a != 1:
+            flat = _numba_coprime_shift(flat, channel_a)
     else:
-        indices = (np.arange(n_pixels) * a + b) % n_pixels
-        flat = flat[indices]
-        if color_shift:
-            flat = np.roll(flat, shift=color_shift, axis=1)
+        if channel_a != 1:
+            flat = _numba_coprime_shift(flat, channel_a)
+        flat = flat[inv_idx]
 
     return flat.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
 
 
 def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
-    """Derive the cpECSK key tuple (a, b, color_shift) from certificate bytes."""
+    """Derive the cpECSK key tuple ``(a, b, channel_a)`` from certificate bytes."""
     n_pixels = FRAME_WIDTH * FRAME_HEIGHT
     digest = hashlib.sha256(cert_bytes).digest()
     seed = int.from_bytes(digest[:4], "big") % n_pixels
@@ -136,8 +134,8 @@ def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
     while math.gcd(a, n_pixels) != 1:
         a = (a + 1) % n_pixels or 1
     b = cert_bytes[0]
-    color_shift = b % CHANNELS
-    return a, b, color_shift
+    channel_a = (b % (CHANNELS - 1)) + 1
+    return a, b, channel_a
 
 
 def encode(
