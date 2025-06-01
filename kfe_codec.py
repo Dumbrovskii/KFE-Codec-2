@@ -47,26 +47,61 @@ def positive_int(value: str) -> int:
 
 
 def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
-    """Convert a BYTES_PER_FRAME sized chunk to a frame array.
 
-    If ``vk3`` is provided, apply cpECSK permutation.
+    """Convert ``chunk`` to a frame array.
+
+    If ``vk3`` is provided, the cpECSK permutation is applied while the frame is
+    constructed to avoid an extra copy of the entire matrix.
     """
-    frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
-        (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
-    )
-    if vk3 is not None:
-        frame = _cpECSK_permute(frame, vk3, encode=True)
-    return frame
+    pixels = np.frombuffer(chunk, dtype=np.uint8).reshape(-1, CHANNELS)
+    if vk3 is None:
+        # ``pixels`` references ``chunk`` memory, so copy to ensure the frame
+        # remains valid after ``chunk`` is freed.
+        return pixels.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS).copy()
+
+    a, b, shift = vk3
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    indices = (np.arange(n_pixels) * a + b) % n_pixels
+    permuted = np.empty_like(pixels)
+    permuted[indices] = pixels
+    if shift:
+        permuted = np.roll(permuted, shift=shift, axis=1)
+    return permuted.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
 
 
 def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) -> bytes:
-    """Convert a frame array back to raw bytes.
+    """Convert ``frame`` back to raw bytes.
 
-    If ``vk3`` is provided, reverse the cpECSK permutation first.
+    If ``vk3`` is provided, the cpECSK permutation is reversed while extracting
+    bytes, avoiding transformation of an intermediate full-size matrix.
     """
-    if vk3 is not None:
-        frame = _cpECSK_permute(frame, vk3, encode=False)
-    return frame.tobytes()
+    pixels = frame.reshape(-1, CHANNELS)
+    if vk3 is None:
+        return pixels.tobytes()
+
+    a, b, shift = vk3
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    if shift:
+        pixels = np.roll(pixels, shift=-shift, axis=1)
+    indices = (pow(a, -1, n_pixels) * (np.arange(n_pixels) - b)) % n_pixels
+    restored = np.empty_like(pixels)
+    restored[indices] = pixels
+    return restored.tobytes()
+
+
+
+
+def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
+    """Derive the cpECSK key tuple (a, b, color_shift) from certificate bytes."""
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    digest = hashlib.sha256(cert_bytes).digest()
+    seed = int.from_bytes(digest[:4], "big") % n_pixels
+    a = seed or 1
+    while math.gcd(a, n_pixels) != 1:
+        a = (a + 1) % n_pixels or 1
+    b = cert_bytes[0]
+    color_shift = b % CHANNELS
+    return a, b, color_shift
 
 
 def _cpECSK_permute(
