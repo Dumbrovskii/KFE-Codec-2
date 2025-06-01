@@ -121,4 +121,4 @@ kfe-codec loopback bin/input.bin bin/restored.bin --cert my.cert
 Connect the HDMI output of the capture card to its input and ensure the device
 is accessible via OpenCV. The command sends the encoded video in real-time and
 reconstructs the binary data from the captured frames. If ``--cert`` is not
-provided, ``<video>.cert`` is used if present.
+provided, ``<output>.cert`` is used if present.

@@ -39,6 +39,11 @@ def loopback(
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
+    if certificate is None:
+        default_cert = output_path + ".cert"
+        if os.path.exists(default_cert):
+            certificate = default_cert
+
     # Pre-compute file size and checksum
     sha = hashlib.sha256()
     file_size = 0
