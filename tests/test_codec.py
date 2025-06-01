@@ -251,3 +251,45 @@ def test_decode_invalid_workers(tmp_path):
 def test_parse_args_invalid_workers():
     with pytest.raises(argparse.ArgumentTypeError):
         parse_args(["encode", "in.bin", "out.mkv", "--workers", "0"])
+
+
+def test_cpECSK_roundtrip(tmp_path):
+    data = os.urandom(512)
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mkv"
+    restored_file = tmp_path / "restored.bin"
+    cert_file = tmp_path / "cert.dat"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+    with open(cert_file, "wb") as f:
+        f.write(b"\x05certificate")
+
+    encode(str(input_file), str(video_file), certificate=str(cert_file))
+    decode(str(video_file), str(restored_file), certificate=str(cert_file))
+
+    with open(restored_file, "rb") as f:
+        restored = f.read()
+
+    assert restored == data
+
+
+def test_cpECSK_cert_mismatch(tmp_path):
+    data = os.urandom(128)
+    input_file = tmp_path / "input.bin"
+    video_file = tmp_path / "video.mkv"
+    output_file = tmp_path / "out.bin"
+    cert_good = tmp_path / "cert.good"
+    cert_bad = tmp_path / "cert.bad"
+
+    with open(input_file, "wb") as f:
+        f.write(data)
+    with open(cert_good, "wb") as f:
+        f.write(b"\x01good")
+    with open(cert_bad, "wb") as f:
+        f.write(b"\x02bad")
+
+    encode(str(input_file), str(video_file), certificate=str(cert_good))
+
+    with pytest.raises(IOError):
+        decode(str(video_file), str(output_file), certificate=str(cert_bad))
