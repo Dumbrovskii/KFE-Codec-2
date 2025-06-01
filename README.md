@@ -15,11 +15,11 @@ kfe_codec.py  # codec implementation
 ## Requirements
 
  - Python 3.9+
- - The Python packages listed in `requirements.txt` (NumPy, OpenCV and `numba`)
+ - The Python packages listed in `requirements.txt` (NumPy, OpenCV, `numba` and `pytest`)
 
 ## Installation
 
-Install the dependencies (including `numba`) with:
+Install the dependencies (including `numba` and `pytest`) with:
 
 ```
 pip install -r requirements.txt
