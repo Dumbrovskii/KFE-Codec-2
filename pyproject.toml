@@ -14,5 +14,5 @@ dependencies = ["numpy", "opencv-python", "numba"]
 kfe-codec = "kfe_codec:main"
 
 [tool.setuptools]
-py-modules = ["kfe_codec"]
+py-modules = ["kfe_codec", "kfe_loopback"]
 packages = []
