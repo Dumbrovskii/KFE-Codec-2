@@ -67,3 +67,48 @@ def test_loopback_roundtrip(tmp_path):
     )
 
     assert out.read_bytes() == data
+
+
+def test_loopback_with_certificate(tmp_path):
+    device = _FakeDevice()
+    data = os.urandom(BYTES_PER_FRAME + 50)
+    inp = tmp_path / "in.bin"
+    out = tmp_path / "out.bin"
+    cert = tmp_path / "enc.cert"
+
+    inp.write_bytes(data)
+    cert.write_bytes(b"cert-data")
+
+    loopback(
+        str(inp),
+        str(out),
+        certificate=str(cert),
+        writer_factory=device.writer_factory,
+        capture_factory=device.capture_factory,
+    )
+
+    assert out.read_bytes() == data
+    out_cert = tmp_path / "out.bin.cert"
+    assert out_cert.exists()
+    assert out_cert.read_bytes() == b"cert-data"
+
+
+def test_loopback_default_certificate(tmp_path):
+    device = _FakeDevice()
+    data = os.urandom(BYTES_PER_FRAME)
+    inp = tmp_path / "input.bin"
+    out = tmp_path / "output.bin"
+    default_cert = tmp_path / "output.bin.cert"
+
+    inp.write_bytes(data)
+    default_cert.write_bytes(b"default-cert")
+
+    loopback(
+        str(inp),
+        str(out),
+        writer_factory=device.writer_factory,
+        capture_factory=device.capture_factory,
+    )
+
+    assert out.read_bytes() == data
+    assert default_cert.read_bytes() == b"default-cert"
