@@ -7,7 +7,6 @@ import cv2
 from kfe_codec import (
     FRAME_WIDTH,
     FRAME_HEIGHT,
-    CHANNELS,
     BYTES_PER_FRAME,
     _chunk_to_frame,
     _frame_to_bytes,
