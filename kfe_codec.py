@@ -47,6 +47,7 @@ def positive_int(value: str) -> int:
 
 
 def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
+
     """Convert ``chunk`` to a frame array.
 
     If ``vk3`` is provided, the cpECSK permutation is applied while the frame is
@@ -88,6 +89,42 @@ def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) 
     return restored.tobytes()
 
 
+
+
+def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
+    """Derive the cpECSK key tuple (a, b, color_shift) from certificate bytes."""
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    digest = hashlib.sha256(cert_bytes).digest()
+    seed = int.from_bytes(digest[:4], "big") % n_pixels
+    a = seed or 1
+    while math.gcd(a, n_pixels) != 1:
+        a = (a + 1) % n_pixels or 1
+    b = cert_bytes[0]
+    color_shift = b % CHANNELS
+    return a, b, color_shift
+
+
+def _cpECSK_permute(
+    frame: np.ndarray, vk3: tuple[int, int, int], *, encode: bool
+) -> np.ndarray:
+    """Apply or reverse cpECSK pixel permutation on ``frame``."""
+    a, b, color_shift = vk3
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    flat = frame.reshape(n_pixels, CHANNELS)
+
+    if not encode:
+        if color_shift:
+            flat = np.roll(flat, shift=-color_shift, axis=1)
+        a_inv = pow(a, -1, n_pixels)
+        indices = (a_inv * (np.arange(n_pixels) - b)) % n_pixels
+        flat = flat[indices]
+    else:
+        indices = (np.arange(n_pixels) * a + b) % n_pixels
+        flat = flat[indices]
+        if color_shift:
+            flat = np.roll(flat, shift=color_shift, axis=1)
+
+    return flat.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
 
 
 def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
