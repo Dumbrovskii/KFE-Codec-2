@@ -15,7 +15,8 @@ kfe_codec.py  # codec implementation
 ## Requirements
 
 - Python 3.8+
-- The Python packages listed in `requirements.txt`
+- The Python packages listed in `requirements.txt` (including `numba` for
+  optimized cpECSK processing)
 
 Install the dependencies with:
 
@@ -49,6 +50,19 @@ Decode a video back to a binary file:
 ```
 kfe-codec decode kfe/output.mkv bin/restored.bin
 ```
+
+### Certificate-based encryption
+
+Optionally provide a certificate file to encrypt frames with **cpECSK**. The
+checksum of the certificate is stored in the video and verified during decoding.
+
+```
+kfe-codec encode bin/input.bin kfe/output --cert cert.bin
+kfe-codec decode kfe/output.mkv bin/restored.bin --cert cert.bin
+```
+
+If the certificate checksum does not match the checksum embedded in the video
+file, decoding aborts with an error.
 
 Add ``--progress`` to either command to display progress information during
 encoding or decoding:
