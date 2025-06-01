@@ -72,22 +72,27 @@ the encoded video without degradation.
 
 ## Certificate-based Encryption
 
-KFE-codec can optionally encrypt frames using the cpECSK scheme. Provide a
-certificate file when encoding to enable encryption:
+cpECSK performs a deterministic permutation of pixels in every frame. The
+permutation parameters are derived from a user supplied *certificate* file. Any
+non-empty file can act as a certificate – for example one created with
+``dd if=/dev/urandom of=my.cert bs=32 count=1``. Pass this file with the
+``--cert`` option when encoding:
 
 ```
-kfe-codec encode bin/input.bin kfe/output --cert path/to/cert
+kfe-codec encode bin/input.bin kfe/output --cert my.cert
 ```
 
-The checksum of the certificate is stored in the first frame and the file is
-copied next to the output video as `<output>.cert`. Decoding verifies the
-checksum and requires the same certificate:
+The SHA‑256 digest of the certificate is written to the header frame and a copy
+of the certificate is saved alongside the video as ``<output>.cert``. During
+decoding the same certificate must be supplied. If ``<video>.cert`` exists in
+the same directory it is loaded automatically, otherwise provide the path
+explicitly:
 
 ```
-kfe-codec decode kfe/output.mkv bin/restored.bin --cert path/to/cert
+kfe-codec decode kfe/output.mkv bin/restored.bin --cert my.cert
 ```
 
-If the checksum does not match, decoding fails.
+Decoding fails if the certificate's digest does not match the embedded value.
 
 ## Testing
 
