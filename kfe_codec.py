@@ -4,6 +4,7 @@ import hashlib
 import math
 import shutil
 
+
 try:
     from numba import njit
 except Exception:  # pragma: no cover - numba may be unavailable
@@ -11,6 +12,7 @@ except Exception:  # pragma: no cover - numba may be unavailable
         def wrapper(func):
             return func
         return wrapper
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -70,6 +72,7 @@ def positive_int(value: str) -> int:
 
 
 def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
+
     """Convert a BYTES_PER_FRAME sized chunk to a frame array.
 
     If ``vk3`` is provided, apply cpECSK permutation.
@@ -90,6 +93,7 @@ def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) 
     if vk3 is not None:
         frame = _cpECSK_permute(frame, vk3, encode=False)
     return frame.tobytes()
+
 
 
 def _cpECSK_permute(
