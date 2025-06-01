@@ -1,6 +1,8 @@
 import argparse
 import os
 import hashlib
+import math
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -44,16 +46,61 @@ def positive_int(value: str) -> int:
     return ivalue
 
 
-def _chunk_to_frame(chunk: bytes) -> np.ndarray:
-    """Convert a BYTES_PER_FRAME sized chunk to a frame array."""
-    return np.frombuffer(chunk, dtype=np.uint8).reshape(
-        (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
-    )
+def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
+    """Convert ``chunk`` to a frame array.
+
+    If ``vk3`` is provided, the cpECSK permutation is applied while the frame is
+    constructed to avoid an extra copy of the entire matrix.
+    """
+    pixels = np.frombuffer(chunk, dtype=np.uint8).reshape(-1, CHANNELS)
+    if vk3 is None:
+        # ``pixels`` references ``chunk`` memory, so copy to ensure the frame
+        # remains valid after ``chunk`` is freed.
+        return pixels.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS).copy()
+
+    a, b, shift = vk3
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    indices = (np.arange(n_pixels) * a + b) % n_pixels
+    permuted = np.empty_like(pixels)
+    permuted[indices] = pixels
+    if shift:
+        permuted = np.roll(permuted, shift=shift, axis=1)
+    return permuted.reshape(FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
 
 
-def _frame_to_bytes(frame: np.ndarray) -> bytes:
-    """Convert a frame array back to raw bytes."""
-    return frame.tobytes()
+def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) -> bytes:
+    """Convert ``frame`` back to raw bytes.
+
+    If ``vk3`` is provided, the cpECSK permutation is reversed while extracting
+    bytes, avoiding transformation of an intermediate full-size matrix.
+    """
+    pixels = frame.reshape(-1, CHANNELS)
+    if vk3 is None:
+        return pixels.tobytes()
+
+    a, b, shift = vk3
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    if shift:
+        pixels = np.roll(pixels, shift=-shift, axis=1)
+    indices = (pow(a, -1, n_pixels) * (np.arange(n_pixels) - b)) % n_pixels
+    restored = np.empty_like(pixels)
+    restored[indices] = pixels
+    return restored.tobytes()
+
+
+
+
+def _derive_vk3(cert_bytes: bytes) -> tuple[int, int, int]:
+    """Derive the cpECSK key tuple (a, b, color_shift) from certificate bytes."""
+    n_pixels = FRAME_WIDTH * FRAME_HEIGHT
+    digest = hashlib.sha256(cert_bytes).digest()
+    seed = int.from_bytes(digest[:4], "big") % n_pixels
+    a = seed or 1
+    while math.gcd(a, n_pixels) != 1:
+        a = (a + 1) % n_pixels or 1
+    b = cert_bytes[0]
+    color_shift = b % CHANNELS
+    return a, b, color_shift
 
 
 def encode(
@@ -63,6 +110,7 @@ def encode(
     container: str = "mkv",
     workers: int = 1,
     progress: bool = False,
+    certificate: str | None = None,
 ) -> None:
     """Encode a binary file into a KFE video.
 
@@ -81,6 +129,8 @@ def encode(
         writer itself remains sequential.
     progress:
         If ``True``, display progress information during encoding.
+    certificate:
+        Optional path to a certificate file used for cpECSK encryption.
     """
 
     out_dir = os.path.dirname(output_path)
@@ -99,6 +149,18 @@ def encode(
             sha.update(chunk)
     checksum = sha.digest()
 
+    cert_checksum = b"\x00" * hashlib.sha256().digest_size
+    vk3 = None
+    if certificate:
+        with open(certificate, "rb") as cf:
+            cert_bytes = cf.read()
+        if not cert_bytes:
+            raise ValueError("Certificate file is empty")
+        cert_checksum = hashlib.sha256(cert_bytes).digest()
+        vk3 = _derive_vk3(cert_bytes)
+        out_cert_path = output_path + ".cert"
+        shutil.copyfile(certificate, out_cert_path)
+
     def pad(chunk: bytes) -> bytes:
         if len(chunk) < BYTES_PER_FRAME:
             chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
@@ -107,7 +169,8 @@ def encode(
     header = (
         file_size.to_bytes(8, "big")
         + checksum
-        + b"\x00" * (BYTES_PER_FRAME - 8 - len(checksum))
+        + cert_checksum
+        + b"\x00" * (BYTES_PER_FRAME - 8 - len(checksum) - len(cert_checksum))
     )
     header_frame = _chunk_to_frame(header)
 
@@ -138,7 +201,7 @@ def encode(
                 chunk = f.read(BYTES_PER_FRAME)
                 if not chunk:
                     break
-                future = ex.submit(_chunk_to_frame, pad(chunk))
+                future = ex.submit(_chunk_to_frame, pad(chunk), vk3)
                 pending.append(future)
                 if len(pending) >= workers:
                     writer.write(pending.pop(0).result())
@@ -170,6 +233,7 @@ def decode(
     *,
     workers: int = 1,
     progress: bool = False,
+    certificate: str | None = None,
 ) -> None:
     """Decode a KFE video back into a binary file.
 
@@ -183,10 +247,17 @@ def decode(
         Number of worker threads used when converting frames back to bytes.
     progress:
         If ``True``, display progress information during decoding.
+    certificate:
+        Optional path to the certificate file required for cpECSK decoding.
     """
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+
+    if certificate is None:
+        default_cert = input_path + ".cert"
+        if os.path.exists(default_cert):
+            certificate = default_cert
 
     with video_capture(input_path) as cap:
         if not cap.isOpened():
@@ -197,8 +268,23 @@ def decode(
         if not ret:
             raise IOError("Input video contains no frames")
         header_bytes = header_frame.tobytes()
+        digest_len = hashlib.sha256().digest_size
         original_size = int.from_bytes(header_bytes[:8], "big")
-        checksum = header_bytes[8 : 8 + hashlib.sha256().digest_size]
+        checksum = header_bytes[8 : 8 + digest_len]
+        cert_checksum_stored = header_bytes[8 + digest_len : 8 + 2 * digest_len]
+
+        vk3 = None
+        if certificate:
+            with open(certificate, "rb") as cf:
+                cert_bytes = cf.read()
+            if not cert_bytes:
+                raise IOError("Certificate file is empty")
+            cert_checksum = hashlib.sha256(cert_bytes).digest()
+            if cert_checksum != cert_checksum_stored:
+                raise IOError("Certificate checksum mismatch")
+            vk3 = _derive_vk3(cert_bytes)
+        elif any(cert_checksum_stored):
+            raise IOError("Certificate required for decoding")
 
         sha = hashlib.sha256()
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
@@ -212,7 +298,7 @@ def decode(
                 ret, frame = cap.read()
                 if not ret or written >= original_size:
                     break
-                future = ex.submit(_frame_to_bytes, frame)
+                future = ex.submit(_frame_to_bytes, frame, vk3)
                 pending.append(future)
                 if len(pending) >= workers:
                     chunk = pending.pop(0).result()
@@ -282,6 +368,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Show progress information while encoding",
     )
+    enc.add_argument(
+        "--cert",
+        dest="certificate",
+        help="Path to certificate file for cpECSK encryption",
+    )
 
     dec = subparsers.add_parser(
         "decode", help="Decode KFE video to binary", exit_on_error=False
@@ -300,6 +391,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Show progress information while decoding",
     )
+    dec.add_argument(
+        "--cert",
+        dest="certificate",
+        help="Path to certificate file for cpECSK decoding",
+    )
     try:
         return parser.parse_args(args)
     except argparse.ArgumentError as err:
@@ -315,6 +411,7 @@ def main() -> None:
             container=args.container,
             workers=args.workers,
             progress=args.progress,
+            certificate=args.certificate,
         )
     elif args.command == "decode":
         decode(
@@ -322,6 +419,7 @@ def main() -> None:
             args.output_file,
             workers=args.workers,
             progress=args.progress,
+            certificate=args.certificate,
         )
 
 
