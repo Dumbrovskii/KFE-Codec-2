@@ -41,9 +41,11 @@ def _numba_coprime_shift(arr: np.ndarray, a: int) -> np.ndarray:
 
 
 @contextmanager
-def video_writer(*args, **kwargs):
+def video_writer(*args, factory=None, **kwargs):
     """Context manager that releases ``cv2.VideoWriter``."""
-    writer = cv2.VideoWriter(*args, **kwargs)
+    if factory is None:
+        factory = cv2.VideoWriter
+    writer = factory(*args, **kwargs)
     try:
         yield writer
     finally:
@@ -51,9 +53,11 @@ def video_writer(*args, **kwargs):
 
 
 @contextmanager
-def video_capture(*args, **kwargs):
+def video_capture(*args, factory=None, **kwargs):
     """Context manager that releases ``cv2.VideoCapture``."""
-    cap = cv2.VideoCapture(*args, **kwargs)
+    if factory is None:
+        factory = cv2.VideoCapture
+    cap = factory(*args, **kwargs)
     try:
         yield cap
     finally:
@@ -431,6 +435,22 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         dest="certificate",
         help="Path to certificate file for cpECSK decoding",
     )
+
+    loop = subparsers.add_parser(
+        "loopback", help="Encode and decode via HDMI loop-back", exit_on_error=False
+    )
+    loop.add_argument("input_file", help="Path to input binary file")
+    loop.add_argument("output_file", help="Path to output binary file")
+    loop.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show progress information during loop-back",
+    )
+    loop.add_argument(
+        "--cert",
+        dest="certificate",
+        help="Path to certificate file for cpECSK",
+    )
     try:
         return parser.parse_args(args)
     except argparse.ArgumentError as err:
@@ -453,6 +473,15 @@ def main() -> None:
             args.input_file,
             args.output_file,
             workers=args.workers,
+            progress=args.progress,
+            certificate=args.certificate,
+        )
+    elif args.command == "loopback":
+        from kfe_loopback import loopback
+
+        loopback(
+            args.input_file,
+            args.output_file,
             progress=args.progress,
             certificate=args.certificate,
         )
