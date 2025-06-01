@@ -7,6 +7,7 @@ name = "kfe-codec"
 version = "0.1.0"
 description = "Prototype KFE codec"
 authors = [{name="KFE Team"}]
+requires-python = ">=3.9"
 dependencies = ["numpy", "opencv-python", "numba"]
 
 [project.scripts]

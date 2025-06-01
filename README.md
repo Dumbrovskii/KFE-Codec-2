@@ -14,7 +14,7 @@ kfe_codec.py  # codec implementation
 
 ## Requirements
 
- - Python 3.8+
+ - Python 3.9+
  - The Python packages listed in `requirements.txt` (NumPy, OpenCV and `numba`)
 
 ## Installation
