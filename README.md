@@ -106,3 +106,19 @@ pytest
 
 The suite exercises encoding and decoding behavior, including the MP4 fallback
 mechanism.
+
+## HDMI Loop-back
+
+The ``loopback`` command streams encoded frames through an HDMI output and
+captures them from the HDMI input. This requires a capture device connected in
+loop-back mode. Usage mirrors ``encode``/``decode`` but performs both steps at
+once:
+
+```
+kfe-codec loopback bin/input.bin bin/restored.bin --cert my.cert
+```
+
+Connect the HDMI output of the capture card to its input and ensure the device
+is accessible via OpenCV. The command sends the encoded video in real-time and
+reconstructs the binary data from the captured frames. If ``--cert`` is not
+provided, ``<video>.cert`` is used if present.
