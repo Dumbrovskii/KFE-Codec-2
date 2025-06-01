@@ -14,10 +14,10 @@ kfe_codec.py  # codec implementation
 
 ## Requirements
 
-- Python 3.8+
-- The Python packages listed in `requirements.txt`
+ - Python 3.8+
+ - The Python packages listed in `requirements.txt` (NumPy, OpenCV and `numba`)
 
-Install the dependencies with:
+Install the dependencies (including `numba`) with:
 
 ```
 pip install -r requirements.txt
@@ -69,6 +69,25 @@ removed during decoding and the output validated.
 The implementation uses the **FFV1** codec for writing videos. FFV1 is a
 lossless codec, ensuring that every byte of the original file is preserved in
 the encoded video without degradation.
+
+## Certificate-based Encryption
+
+KFE-codec can optionally encrypt frames using the cpECSK scheme. Provide a
+certificate file when encoding to enable encryption:
+
+```
+kfe-codec encode bin/input.bin kfe/output --cert path/to/cert
+```
+
+The checksum of the certificate is stored in the first frame and the file is
+copied next to the output video as `<output>.cert`. Decoding verifies the
+checksum and requires the same certificate:
+
+```
+kfe-codec decode kfe/output.mkv bin/restored.bin --cert path/to/cert
+```
+
+If the checksum does not match, decoding fails.
 
 ## Testing
 
