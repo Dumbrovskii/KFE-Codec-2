@@ -318,3 +318,29 @@ def test_cpECSK_default_cert(tmp_path):
         restored = f.read()
 
     assert restored == data
+
+
+def test_mask_key_roundtrip(tmp_path):
+    data = os.urandom(512)
+    inp = tmp_path / "input.bin"
+    vid = tmp_path / "video.mkv"
+    out = tmp_path / "restored.bin"
+
+    inp.write_bytes(data)
+
+    encode(str(inp), str(vid), mask_key="secret")
+    decode(str(vid), str(out), mask_key="secret")
+
+    assert out.read_bytes() == data
+
+
+def test_mask_key_mismatch(tmp_path):
+    data = os.urandom(128)
+    inp = tmp_path / "input.bin"
+    vid = tmp_path / "video.mkv"
+    inp.write_bytes(data)
+
+    encode(str(inp), str(vid), mask_key="one")
+
+    with pytest.raises(IOError):
+        decode(str(vid), str(tmp_path / "out.bin"), mask_key="two")
