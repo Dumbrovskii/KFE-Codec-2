@@ -96,6 +96,19 @@ kfe-codec decode kfe/output.mkv bin/restored.bin --cert my.cert
 
 Decoding fails if the certificate's digest does not match the embedded value.
 
+## XOR Mask Key
+
+Frames can be XOR masked with a pseudorandom stream derived from a user
+provided key. Specify the key when encoding and decoding with ``--mask-key``:
+
+```
+kfe-codec encode bin/input.bin kfe/output --mask-key secret
+kfe-codec decode kfe/output.mkv bin/restored.bin --mask-key secret
+```
+
+The SHA‑256 digest of the key is stored in the header so decoding fails if the
+wrong key is supplied.
+
 ## Testing
 
 Once the dependencies are installed you can run the automated tests with:

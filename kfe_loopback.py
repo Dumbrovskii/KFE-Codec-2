@@ -21,6 +21,7 @@ def loopback(
     output_path: str,
     *,
     certificate: str | None = None,
+    mask_key: str | None = None,
     progress: bool = False,
     writer_factory: Callable[..., cv2.VideoWriter] = cv2.VideoWriter,
     capture_factory: Callable[..., cv2.VideoCapture] = cv2.VideoCapture,
@@ -31,7 +32,8 @@ def loopback(
     capture factories which default to ``cv2.VideoWriter`` and
     ``cv2.VideoCapture``. The function assumes the HDMI output is connected to
     the HDMI input so that frames written by the writer can be read by the
-    capture.
+    capture. When ``mask_key`` is provided frame data is XOR masked using the
+    same algorithm as the standalone encoder/decoder.
     """
 
     out_dir = os.path.dirname(output_path)
@@ -52,7 +54,9 @@ def loopback(
             sha.update(chunk)
     checksum = sha.digest()
 
-    cert_checksum = b"\x00" * hashlib.sha256().digest_size
+    digest_len = hashlib.sha256().digest_size
+    cert_checksum = b"\x00" * digest_len
+    mask_checksum = b"\x00" * digest_len
     vk3 = None
     if certificate:
         with open(certificate, "rb") as cf:
@@ -67,6 +71,11 @@ def loopback(
 
             shutil.copyfile(certificate, out_cert_path)
 
+    mask_key_bytes = None
+    if mask_key is not None:
+        mask_key_bytes = mask_key.encode()
+        mask_checksum = hashlib.sha256(mask_key_bytes).digest()
+
     def pad(chunk: bytes) -> bytes:
         if len(chunk) < BYTES_PER_FRAME:
             chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
@@ -76,7 +85,15 @@ def loopback(
         file_size.to_bytes(8, "big")
         + checksum
         + cert_checksum
-        + b"\x00" * (BYTES_PER_FRAME - 8 - len(checksum) - len(cert_checksum))
+        + mask_checksum
+        + b"\x00"
+        * (
+            BYTES_PER_FRAME
+            - 8
+            - len(checksum)
+            - len(cert_checksum)
+            - len(mask_checksum)
+        )
     )
     header_frame = _chunk_to_frame(header)
 
@@ -97,6 +114,7 @@ def loopback(
         original_size = int.from_bytes(header_bytes[:8], "big")
         checksum_rx = header_bytes[8 : 8 + digest_len]
         cert_checksum_stored = header_bytes[8 + digest_len : 8 + 2 * digest_len]
+        mask_checksum_stored = header_bytes[8 + 2 * digest_len : 8 + 3 * digest_len]
 
         if original_size != file_size or checksum_rx != checksum:
             raise IOError("Header mismatch on loop-back")
@@ -107,28 +125,38 @@ def loopback(
         elif any(cert_checksum_stored):
             raise IOError("Certificate required for decoding")
 
+        if mask_key is not None:
+            if mask_key_bytes is None:
+                mask_key_bytes = mask_key.encode()
+            if hashlib.sha256(mask_key_bytes).digest() != mask_checksum_stored:
+                raise IOError("Mask key checksum mismatch")
+        elif any(mask_checksum_stored):
+            raise IOError("Mask key required for decoding")
+
         sha_out = hashlib.sha256()
         with open(input_path, "rb") as fin, open(output_path, "wb") as fout:
             written = 0
             frame_total = (file_size + BYTES_PER_FRAME - 1) // BYTES_PER_FRAME
             processed = 0
+            index = 0
             while written < file_size:
                 chunk = fin.read(BYTES_PER_FRAME)
                 if not chunk:
                     break
-                frame = _chunk_to_frame(pad(chunk), vk3)
+                frame = _chunk_to_frame(pad(chunk), vk3, mask_key_bytes, index)
                 writer.write(frame)
 
                 ret, rx_frame = cap.read()
                 if not ret:
                     raise IOError("Lost frame on HDMI input")
-                data = _frame_to_bytes(rx_frame, vk3)
+                data = _frame_to_bytes(rx_frame, vk3, mask_key_bytes, index)
                 bytes_to_write = min(file_size - written, len(data))
                 portion = data[:bytes_to_write]
                 fout.write(portion)
                 sha_out.update(portion)
                 written += bytes_to_write
                 processed += 1
+                index += 1
                 if progress:
                     print(
                         f"Loopback {processed}/{frame_total} frames",

@@ -75,27 +75,52 @@ def positive_int(value: str) -> int:
     return ivalue
 
 
-def _chunk_to_frame(chunk: bytes, vk3: tuple[int, int, int] | None = None) -> np.ndarray:
+def _apply_xor_mask(data: np.ndarray, key: bytes, index: int) -> None:
+    """XOR ``data`` with a pseudorandom stream derived from ``key`` and ``index``."""
+    seed_bytes = hashlib.blake2b(key + index.to_bytes(8, "big"), digest_size=8).digest()
+    seed = int.from_bytes(seed_bytes, "big")
+    rng = np.random.default_rng(seed)
+    mask = rng.integers(0, 256, size=data.size, dtype=np.uint8).reshape(data.shape)
+    np.bitwise_xor(data, mask, out=data)
+
+
+def _chunk_to_frame(
+    chunk: bytes,
+    vk3: tuple[int, int, int] | None = None,
+    mask_key: bytes | None = None,
+    index: int = 0,
+) -> np.ndarray:
 
     """Convert a BYTES_PER_FRAME sized chunk to a frame array.
 
-    If ``vk3`` is provided, apply cpECSK permutation.
+    If ``vk3`` is provided, apply cpECSK permutation. ``mask_key`` masking is
+    applied before cpECSK.
     """
     frame = np.frombuffer(chunk, dtype=np.uint8).reshape(
         (FRAME_HEIGHT, FRAME_WIDTH, CHANNELS)
-    )
+    ).copy()
+    if mask_key is not None:
+        _apply_xor_mask(frame, mask_key, index)
     if vk3 is not None:
         frame = _cpECSK_permute(frame, vk3, encode=True)
     return frame
 
 
-def _frame_to_bytes(frame: np.ndarray, vk3: tuple[int, int, int] | None = None) -> bytes:
+def _frame_to_bytes(
+    frame: np.ndarray,
+    vk3: tuple[int, int, int] | None = None,
+    mask_key: bytes | None = None,
+    index: int = 0,
+) -> bytes:
     """Convert a frame array back to raw bytes.
 
-    If ``vk3`` is provided, reverse the cpECSK permutation first.
+    cpECSK is reversed first if ``vk3`` is provided, then ``mask_key`` masking is
+    undone.
     """
     if vk3 is not None:
         frame = _cpECSK_permute(frame, vk3, encode=False)
+    if mask_key is not None:
+        _apply_xor_mask(frame, mask_key, index)
     return frame.tobytes()
 
 
@@ -150,6 +175,7 @@ def encode(
     workers: int = 1,
     progress: bool = False,
     certificate: str | None = None,
+    mask_key: str | None = None,
 ) -> None:
     """Encode a binary file into a KFE video.
 
@@ -170,6 +196,8 @@ def encode(
         If ``True``, display progress information during encoding.
     certificate:
         Optional path to a certificate file used for cpECSK encryption.
+    mask_key:
+        Optional key used for XOR masking of frame data.
     """
 
     out_dir = os.path.dirname(output_path)
@@ -188,7 +216,9 @@ def encode(
             sha.update(chunk)
     checksum = sha.digest()
 
-    cert_checksum = b"\x00" * hashlib.sha256().digest_size
+    digest_len = hashlib.sha256().digest_size
+    cert_checksum = b"\x00" * digest_len
+    mask_checksum = b"\x00" * digest_len
     vk3 = None
     if certificate:
         with open(certificate, "rb") as cf:
@@ -200,6 +230,11 @@ def encode(
         out_cert_path = output_path + ".cert"
         shutil.copyfile(certificate, out_cert_path)
 
+    mask_key_bytes = None
+    if mask_key is not None:
+        mask_key_bytes = mask_key.encode()
+        mask_checksum = hashlib.sha256(mask_key_bytes).digest()
+
     def pad(chunk: bytes) -> bytes:
         if len(chunk) < BYTES_PER_FRAME:
             chunk += b"\x00" * (BYTES_PER_FRAME - len(chunk))
@@ -209,7 +244,15 @@ def encode(
         file_size.to_bytes(8, "big")
         + checksum
         + cert_checksum
-        + b"\x00" * (BYTES_PER_FRAME - 8 - len(checksum) - len(cert_checksum))
+        + mask_checksum
+        + b"\x00"
+        * (
+            BYTES_PER_FRAME
+            - 8
+            - len(checksum)
+            - len(cert_checksum)
+            - len(mask_checksum)
+        )
     )
     header_frame = _chunk_to_frame(header)
 
@@ -236,11 +279,19 @@ def encode(
             pending = []
             frame_total = (file_size + BYTES_PER_FRAME - 1) // BYTES_PER_FRAME
             written_frames = 0
+            index = 0
             while True:
                 chunk = f.read(BYTES_PER_FRAME)
                 if not chunk:
                     break
-                future = ex.submit(_chunk_to_frame, pad(chunk), vk3)
+                future = ex.submit(
+                    _chunk_to_frame,
+                    pad(chunk),
+                    vk3,
+                    mask_key_bytes,
+                    index,
+                )
+                index += 1
                 pending.append(future)
                 if len(pending) >= workers:
                     writer.write(pending.pop(0).result())
@@ -273,6 +324,7 @@ def decode(
     workers: int = 1,
     progress: bool = False,
     certificate: str | None = None,
+    mask_key: str | None = None,
 ) -> None:
     """Decode a KFE video back into a binary file.
 
@@ -288,6 +340,8 @@ def decode(
         If ``True``, display progress information during decoding.
     certificate:
         Optional path to the certificate file required for cpECSK decoding.
+    mask_key:
+        Optional key used for XOR masking of frame data.
     """
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -311,8 +365,10 @@ def decode(
         original_size = int.from_bytes(header_bytes[:8], "big")
         checksum = header_bytes[8 : 8 + digest_len]
         cert_checksum_stored = header_bytes[8 + digest_len : 8 + 2 * digest_len]
+        mask_checksum_stored = header_bytes[8 + 2 * digest_len : 8 + 3 * digest_len]
 
         vk3 = None
+        mask_key_bytes = None
         if certificate:
             with open(certificate, "rb") as cf:
                 cert_bytes = cf.read()
@@ -325,6 +381,14 @@ def decode(
         elif any(cert_checksum_stored):
             raise IOError("Certificate required for decoding")
 
+        if mask_key is not None:
+            mask_key_bytes = mask_key.encode()
+            mask_checksum = hashlib.sha256(mask_key_bytes).digest()
+            if mask_checksum != mask_checksum_stored:
+                raise IOError("Mask key checksum mismatch")
+        elif any(mask_checksum_stored):
+            raise IOError("Mask key required for decoding")
+
         sha = hashlib.sha256()
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex, open(
             output_path, "wb"
@@ -333,11 +397,19 @@ def decode(
             pending = []
             frame_total = (original_size + BYTES_PER_FRAME - 1) // BYTES_PER_FRAME
             decoded_frames = 0
+            index = 0
             while True:
                 ret, frame = cap.read()
                 if not ret or written >= original_size:
                     break
-                future = ex.submit(_frame_to_bytes, frame, vk3)
+                future = ex.submit(
+                    _frame_to_bytes,
+                    frame,
+                    vk3,
+                    mask_key_bytes,
+                    index,
+                )
+                index += 1
                 pending.append(future)
                 if len(pending) >= workers:
                     chunk = pending.pop(0).result()
@@ -412,6 +484,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         dest="certificate",
         help="Path to certificate file for cpECSK encryption",
     )
+    enc.add_argument(
+        "--mask-key",
+        dest="mask_key",
+        help="Key used for XOR masking",
+    )
 
     dec = subparsers.add_parser(
         "decode", help="Decode KFE video to binary", exit_on_error=False
@@ -435,6 +512,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         dest="certificate",
         help="Path to certificate file for cpECSK decoding",
     )
+    dec.add_argument(
+        "--mask-key",
+        dest="mask_key",
+        help="Key used for XOR masking",
+    )
 
     loop = subparsers.add_parser(
         "loopback", help="Encode and decode via HDMI loop-back", exit_on_error=False
@@ -450,6 +532,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "--cert",
         dest="certificate",
         help="Path to certificate file for cpECSK",
+    )
+    loop.add_argument(
+        "--mask-key",
+        dest="mask_key",
+        help="Key used for XOR masking",
     )
     try:
         return parser.parse_args(args)
@@ -467,6 +554,7 @@ def main() -> None:
             workers=args.workers,
             progress=args.progress,
             certificate=args.certificate,
+            mask_key=args.mask_key,
         )
     elif args.command == "decode":
         decode(
@@ -475,6 +563,7 @@ def main() -> None:
             workers=args.workers,
             progress=args.progress,
             certificate=args.certificate,
+            mask_key=args.mask_key,
         )
     elif args.command == "loopback":
         from kfe_loopback import loopback
@@ -484,6 +573,7 @@ def main() -> None:
             args.output_file,
             progress=args.progress,
             certificate=args.certificate,
+            mask_key=args.mask_key,
         )
 
 
